@@ -20,10 +20,10 @@ __global__ void VecAdd(int n, const float *A, const float *B, float* C) {
      *
      ********************************************************************/
 //added for extra compute time
-//long long start = clock64();
-//long long cycles_elapsed;
-//do{cycles_elapsed = clock64() - start;}
-//while(cycles_elapsed <20000);
+long long start = clock64();
+long long cycles_elapsed;
+do{cycles_elapsed = clock64() - start;}
+while(cycles_elapsed <20000);
 //end of added compute time
     // INSERT KERNEL CODE HERE
 	int i = blockDim.x * blockIdx.x + threadIdx.x;
