@@ -4,7 +4,7 @@
  *cr                         All Rights Reserved
  *cr
  ******************************************************************************/
-
+//use pinned memory and buffers cudaHostAlloc()
 #include <stdio.h>
 #include <stdlib.h>
 #include "kernel.cu"
@@ -17,21 +17,27 @@ int main (int argc, char *argv[])
 
     Timer timer;
     cudaError_t cuda_ret;
-
-    // Initialize host variables ----------------------------------------------
+    cudaStream_t stream0,stream1,stream2;
+   cudaStreamCreate(&stream0);
+   cudaStreamCreate(&stream1);
+   cudaStreamCreate(&stream2);
+   const unsigned int BLOCK_SIZE = 256;   
+ // Initialize host variables ----------------------------------------------
 
     printf("\nSetting up the problem..."); fflush(stdout);
     startTime(&timer);
 
     float *A_h, *B_h, *C_h;
-    float *A_d, *B_d, *C_d;
-    size_t A_sz, B_sz, C_sz;
+    float *A_d0, *B_d0, *C_d0;
+    float *A_d1, *B_d1, *C_d1;
+    float *A_d2, *B_d2, *C_d2;
+    size_t A_sz, B_sz, C_sz, total_sz;
     unsigned VecSize;
    
     dim3 dim_grid, dim_block;
 
       if (argc == 1) {
-        VecSize = 1000;
+        VecSize = 1000000;
       } 
       else if (argc == 2) {
       VecSize = atoi(argv[1]);     
@@ -41,16 +47,17 @@ int main (int argc, char *argv[])
         exit(0);
       }
 
-    A_sz = VecSize;
-    B_sz = VecSize;
-    C_sz = VecSize;
-    A_h = (float*) malloc( sizeof(float)*A_sz );
-    for (unsigned int i=0; i < A_sz; i++) { A_h[i] = (rand()%100)/100.00; }
+    A_sz = 333333;
+    B_sz = 333333;
+    C_sz = 333333;
+    total_sz=1000000;
+    cudaHostAlloc( (void **) &A_h, sizeof(float)*total_sz,cudaHostAllocDefault );
+    for (unsigned int i=0; i < total_sz; i++) { A_h[i] = (rand()%100)/100.00; }
 
-    B_h = (float*) malloc( sizeof(float)*B_sz );
-    for (unsigned int i=0; i < B_sz; i++) { B_h[i] = (rand()%100)/100.00; }
+    cudaHostAlloc( (void **) &B_h, sizeof(float)*total_sz,cudaHostAllocDefault );
+    for (unsigned int i=0; i < total_sz; i++) { B_h[i] = (rand()%100)/100.00; }
 
-    C_h = (float*) malloc( sizeof(float)*C_sz );
+    cudaHostAlloc( (void **) &C_h, sizeof(float)*total_sz,cudaHostAllocDefault);
 
     stopTime(&timer); printf("%f s\n", elapsedTime(timer));
     printf("    size Of vector: %u x %u\n  ", VecSize);
@@ -61,63 +68,96 @@ int main (int argc, char *argv[])
     startTime(&timer);
 
     //INSERT CODE HERE
-	cudaMalloc((void**) &A_d,4*A_sz);
-	cudaMalloc((void**) &B_d,4*B_sz);
-	cudaMalloc((void**) &C_d,4*C_sz);
-   
-    cudaDeviceSynchronize();
+	cudaMalloc((void**) &A_d0,4*A_sz);
+	cudaMalloc((void**) &B_d0,4*B_sz);
+	cudaMalloc((void**) &C_d0,4*C_sz);
+        cudaMalloc((void**) &A_d1,4*A_sz);
+        cudaMalloc((void**) &B_d1,4*B_sz);
+        cudaMalloc((void**) &C_d1,4*C_sz);
+        cudaMalloc((void**) &A_d2,4*(A_sz+1));//need to cover all 1000000 in vectors
+        cudaMalloc((void**) &B_d2,4*(B_sz+1));
+        cudaMalloc((void**) &C_d2,4*(C_sz+1));
+
+    //cudaDeviceSynchronize();
     stopTime(&timer); printf("%f s\n", elapsedTime(timer));
 
     // Copy host variables to device ------------------------------------------
 
     printf("Copying data from host to device..."); fflush(stdout);
-    startTime(&timer);
+    //startTime(&timer);
 
     //INSERT CODE HERE
-	cudaMemcpy(A_d,A_h,4*A_sz,cudaMemcpyHostToDevice);
-	cudaMemcpy(B_d,B_h,4*B_sz,cudaMemcpyHostToDevice);
+	cudaMemcpyAsync(A_d0,A_h,4*A_sz,cudaMemcpyHostToDevice,stream0);
+	cudaMemcpyAsync(B_d0,B_h,4*B_sz,cudaMemcpyHostToDevice,stream0);
+	VecAdd<<<(A_sz-1)/BLOCK_SIZE+1,BLOCK_SIZE,0,stream0>>>(A_sz,A_d0,B_d0,C_d0);
+	//cudaDeviceSynchronize();
+	
+	cudaMemcpyAsync(A_d1,A_h+A_sz,4*A_sz,cudaMemcpyHostToDevice,stream1);
+        cudaMemcpyAsync(B_d1,B_h+B_sz,4*B_sz,cudaMemcpyHostToDevice,stream1);
+	VecAdd<<<(A_sz-1)/BLOCK_SIZE+1,BLOCK_SIZE,0,stream1>>>(A_sz,A_d1,B_d1,C_d1);
+	//cudaDeviceSynchronize();	
 
-    cudaDeviceSynchronize();
-    stopTime(&timer); printf("%f s\n", elapsedTime(timer));
+	cudaMemcpyAsync(A_d2,A_h+2*A_sz,4*(A_sz+1),cudaMemcpyHostToDevice,stream2);
+        cudaMemcpyAsync(B_d2,B_h+2*B_sz,4*(B_sz+1),cudaMemcpyHostToDevice,stream2);
+	VecAdd<<<(A_sz+1-1)/BLOCK_SIZE+1,BLOCK_SIZE,0,stream2>>>(A_sz+1,A_d2,B_d2,C_d2);
+	//cudaDeviceSynchronize();
+
+//	cudaStreamSynchronize(stream0);
+//	cudaStreamSynchronize(stream1);
+//	cudaStreamSynchronize(stream2);
+    
+//cudaDeviceSynchronize();
+    //stopTime(&timer); printf("%f s\n", elapsedTime(timer));
 
     // Launch kernel  ---------------------------
-    printf("Launching kernel..."); fflush(stdout);
-    startTime(&timer);
-    basicVecAdd(A_d, B_d, C_d, VecSize); //In kernel.cu
-
-    cuda_ret = cudaDeviceSynchronize();
-	if(cuda_ret != cudaSuccess) FATAL("Unable to launch kernel");
-    stopTime(&timer); printf("%f s\n", elapsedTime(timer));
-
+    //printf("Launching kernel..."); fflush(stdout);
+    //startTime(&timer);
+    //cuda_ret = cudaDeviceSynchronize();
+//	if(cuda_ret != cudaSuccess) FATAL("Unable to launch kernel");
+    //stopTime(&timer); printf("%f s\n", elapsedTime(timer));
     // Copy device variables from host ----------------------------------------
 
-    printf("Copying data from device to host..."); fflush(stdout);
-    startTime(&timer);
+    //printf("Copying data from device to host..."); fflush(stdout);
+    //startTime(&timer);
 
     //INSERT CODE HERE
-	cudaMemcpy(C_h,C_d,4*C_sz,cudaMemcpyDeviceToHost);
+	cudaMemcpyAsync(C_h,C_d0,4*C_sz,cudaMemcpyDeviceToHost,stream0);
+ 	cudaMemcpyAsync(C_h+C_sz,C_d1,4*C_sz,cudaMemcpyDeviceToHost,stream1);
+	cudaMemcpyAsync(C_h+2*C_sz,C_d2,4*(C_sz+1),cudaMemcpyDeviceToHost,stream2);
 
-
-    cudaDeviceSynchronize();
-    stopTime(&timer); printf("%f s\n", elapsedTime(timer));
+        cudaStreamSynchronize(stream0);
+        cudaStreamSynchronize(stream1);
+        cudaStreamSynchronize(stream2);
+	cudaStreamDestroy(stream0);
+	cudaStreamDestroy(stream1);
+	cudaStreamDestroy(stream2);
+    //cudaDeviceSynchronize();
+    //stopTime(&timer); printf("%f s\n", elapsedTime(timer));
 
     // Verify correctness -----------------------------------------------------
 
-    printf("Verifying results..."); fflush(stdout);
+    //printf("Verifying results..."); fflush(stdout);
 
-    verify(A_h, B_h, C_h, VecSize);
+    //verify(A_h, B_h, C_h, VecSize);
 
 
     // Free memory ------------------------------------------------------------
 
-    free(A_h);
-    free(B_h);
-    free(C_h);
+    cudaFreeHost(A_h);
+    cudaFreeHost(B_h);
+    cudaFreeHost(C_h);
 
     //INSERT CODE HERE
-	cudaFree(A_d);
-	cudaFree(B_d);
-	cudaFree(C_d);
+	cudaFree(A_d0);
+	cudaFree(B_d0);
+	cudaFree(C_d0);
+	cudaFree(A_d1);
+        cudaFree(B_d1);
+        cudaFree(C_d1);
+        cudaFree(A_d2);
+        cudaFree(B_d2);
+        cudaFree(C_d2);
+
     return 0;
 
 }
